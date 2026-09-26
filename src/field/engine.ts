@@ -681,30 +681,15 @@ export class PlayEngine {
         }
         break;
       }
-      case 'route': {
-        if (f.release > 0) {
-          this.accelerate(f, 0, 0, dt);
-          break;
-        }
-        const tgt = f.route[f.ri];
-        if (tgt) {
-          const rs = this.routeSkill(f);
-          // Intermediate waypoints are the breaks: keep speed through them; the last one is where he settles.
-          this.steer(f, tgt.x, tgt.y, dt, 1, f.ri < f.route.length - 1 ? rs.carry : 0, rs.accel);
-          if (dist(f, tgt) < 0.7) f.ri++;
-        } else if (f.settle || (Math.abs(f.dirY) > Math.abs(f.dirX) && (f.y < 3 || f.y > FIELD_W - 3))) {
-          // Sit down in the window (curls/hitches) or stop at the sideline (flats/outs).
-          this.steer(f, f.x - 0.2, f.y, dt, 0.3);
-        } else {
-          const tx = f.x + f.dirX * 5;
-          const ty = clamp(f.y + f.dirY * 5, 1, FIELD_W - 1);
-          this.steer(f, tx, ty, dt);
-        }
+      case 'route':
+        this.runRoute(f, dt);
         break;
-      }
       case 'target': {
+        // Receivers don't read the throw instantly: they keep running the route for a beat,
+        // then break for the ball. Leading him properly still matters.
         const air = this.ball.air;
-        if (air) this.steer(f, air.x1, air.y1, dt);
+        if (air && this.t - this.throwT < 0.3) this.runRoute(f, dt);
+        else if (air) this.steer(f, air.x1, air.y1, dt);
         break;
       }
       case 'fake': {
@@ -752,6 +737,27 @@ export class PlayEngine {
       }
       default:
         break;
+    }
+  }
+
+  private runRoute(f: FP, dt: number) {
+    if (f.release > 0) {
+      this.accelerate(f, 0, 0, dt);
+      return;
+    }
+    const tgt = f.route[f.ri];
+    if (tgt) {
+      const rs = this.routeSkill(f);
+      // Intermediate waypoints are the breaks: keep speed through them; the last one is where he settles.
+      this.steer(f, tgt.x, tgt.y, dt, 1, f.ri < f.route.length - 1 ? rs.carry : 0, rs.accel);
+      if (dist(f, tgt) < 0.7) f.ri++;
+    } else if (f.settle || (Math.abs(f.dirY) > Math.abs(f.dirX) && (f.y < 3 || f.y > FIELD_W - 3))) {
+      // Sit down in the window (curls/hitches) or stop at the sideline (flats/outs).
+      this.steer(f, f.x - 0.2, f.y, dt, 0.3);
+    } else {
+      const tx = f.x + f.dirX * 5;
+      const ty = clamp(f.y + f.dirY * 5, 1, FIELD_W - 1);
+      this.steer(f, tx, ty, dt);
     }
   }
 
@@ -1258,10 +1264,11 @@ export class PlayEngine {
     const aim = reach(tx, ty);
 
     // Aim assist: the receiver whose path runs nearest the aim point gets the throw nudged
-    // toward where he'll be when it arrives. It's partial (the user still has to lead him) and
-    // scales with the QB: smart, accurate passers correct more of a sloppy aim.
+    // toward where he'll be when it arrives, but only by a capped distance: it cleans up a
+    // near-miss, it doesn't do the leading for you. Smart, accurate QBs correct a bit more.
     const ASSIST = 3.5;
-    const strength = clamp(0.35 + (at(qb.p, 'awr') - 60) * 0.008 + (at(qb.p, 'acc') - 60) * 0.006, 0.35, 0.8);
+    const skill = clamp(((at(qb.p, 'awr') + at(qb.p, 'acc')) / 2 - 55) / 40, 0, 1);
+    const maxCorrection = 0.6 + skill * 1.4; // yards: ~0.6 for a weak passer, 2.0 for an elite one
     let target: FP | null = null;
     let best = ASSIST;
     const T0 = flight(aim.d);
@@ -1283,8 +1290,9 @@ export class PlayEngine {
         px = target.x + target.vx * T;
         py = target.y + target.vy * T;
       }
-      const pull = strength * (best <= 1 ? 1 : 1 - (best - 1) / (ASSIST - 1));
-      land = reach(aim.x + (px - aim.x) * pull, aim.y + (py - aim.y) * pull);
+      const gap = Math.hypot(px - aim.x, py - aim.y);
+      const move = Math.min(gap, maxCorrection) * (best <= 1 ? 1 : 1 - (best - 1) / (ASSIST - 1));
+      land = gap > 1e-6 ? reach(aim.x + ((px - aim.x) / gap) * move, aim.y + ((py - aim.y) / gap) * move) : aim;
     }
     const d = land.d;
     const T = flight(d);

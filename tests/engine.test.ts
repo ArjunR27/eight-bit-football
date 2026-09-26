@@ -24,7 +24,7 @@ function runPlay(play: Play, callId: keyof typeof DEF_CALLS, seed: number, throw
         for (const d of e.def) sep = Math.min(sep, Math.hypot(d.x - r.x, d.y - r.y));
         if (sep > bestSep) {
           bestSep = sep;
-          const T = Math.hypot(r.x - e.qb.x, r.y - e.qb.y) / 24;
+          const T = 0.12 + Math.hypot(r.x - e.qb.x, r.y - e.qb.y) / 24; // matches the engine: hang + distance / arm speed
           best = { x: r.x + r.vx * T, y: r.y + r.vy * T };
         }
       }
